@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import SegmentationCanvas from './SegmentationCanvas';
 import ToolPanel from './ToolPanel';
-import LabelSidebar from './LabelSidebar';
+import RightSidebar from './RightSidebar';
 import StatusBar from './StatusBar';
 import TopBar from './TopBar';
-import FrameTimeline from './FrameTimeline';
-import VideoLibraryPanel from './VideoLibraryPanel';
+import VideoTimeline from './VideoTimeline';
 import { uploadAnnotatedFrame } from '../api/client';
-import { computeDisplaySize } from '../utils/canvasSizing';
+import { mockLabels } from '../utils/mockData';
 
-const FRAME_INTERVAL_SECONDS = 10;
 const FALLBACK_VIDEO = {
   name: 'JA_2.mp4',
   bucket: 'local',
@@ -27,22 +25,35 @@ export default function SegmentationDashboard() {
 
   const [videos, setVideos] = useState([FALLBACK_VIDEO]);
   const [videoListError, setVideoListError] = useState('Google Cloud integration to be implemented.');
-  const [isVideoPanelOpen, setIsVideoPanelOpen] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState(FALLBACK_VIDEO);
+  const [rightSidebarTab, setRightSidebarTab] = useState('labels');
 
-  const [frames, setFrames] = useState([]);
-  const [isGeneratingFrames, setIsGeneratingFrames] = useState(false);
-  const [frameError, setFrameError] = useState(null);
-  const [selectedFrame, setSelectedFrame] = useState(null);
+  // Video playback state
+  const [videoUrl, setVideoUrl] = useState(FALLBACK_VIDEO_URL);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
   const [videoInfo, setVideoInfo] = useState({ width: null, height: null, duration: null });
+  const [isVideoReady, setIsVideoReady] = useState(false);
+  const [videoError, setVideoError] = useState(null);
 
-  const [frameAnnotations, setFrameAnnotations] = useState({});
+  // Annotations: keyed by timestamp (in seconds)
+  const [annotationsByTime, setAnnotationsByTime] = useState({}); // { [time]: { shapes, labels } }
   const [selectedShapeId, setSelectedShapeId] = useState(null);
+  
+  // Saved annotations (for Recorded Annotations tab)
+  const [savedAnnotations, setSavedAnnotations] = useState([]); // Array of { time, label, sublabels, savedAt }
+
+  // Labels state
+  const [labels, setLabels] = useState(mockLabels);
 
   const [saveStatus, setSaveStatus] = useState(null);
   const [saveError, setSaveError] = useState(null);
 
-  const currentVideoKey = selectedVideo?.name || null;
+  // Get current timestamp's annotations
+  const currentTimestamp = Math.floor(currentTime);
+  const currentShapes = useMemo(() => {
+    return annotationsByTime[currentTimestamp]?.shapes || [];
+  }, [annotationsByTime, currentTimestamp]);
 
   const handleToolChange = (toolId) => {
     setActiveTool(toolId);
@@ -61,282 +72,276 @@ export default function SegmentationDashboard() {
     setZoom(100);
   };
 
-  const currentShapes = useMemo(() => {
-    if (!selectedVideo || !selectedFrame) return [];
-    return frameAnnotations[currentVideoKey]?.[selectedFrame.time] || [];
-  }, [frameAnnotations, selectedVideo, selectedFrame, currentVideoKey]);
+  // Video playback handlers
+  const handleVideoReady = useCallback((metadata) => {
+    setVideoInfo({
+      width: metadata.width,
+      height: metadata.height,
+      duration: metadata.duration,
+    });
+    setIsVideoReady(true);
+    setVideoError(null);
+  }, []);
 
-  const updateAnnotationsForFrame = useCallback(
-    (frameTime, updater) => {
-      if (!selectedVideo) return;
-      setFrameAnnotations((prev) => {
-        const videoAnnotations = prev[currentVideoKey] || {};
-        const existing = videoAnnotations[frameTime] || [];
+  const handleVideoTimeUpdate = useCallback((time) => {
+    setCurrentTime(time);
+  }, []);
+
+  const handleVideoPlay = useCallback(() => {
+    setIsPlaying(true);
+  }, []);
+
+  const handleVideoPause = useCallback(() => {
+    setIsPlaying(false);
+  }, []);
+
+  const handleVideoError = useCallback((error) => {
+    setVideoError(error || 'Failed to load video.');
+    setIsVideoReady(false);
+  }, []);
+
+  const handlePlayPause = useCallback(() => {
+    setIsPlaying((prev) => !prev);
+  }, []);
+
+  const handleSeek = useCallback((time) => {
+    setCurrentTime(time);
+    setIsPlaying(false); // Pause when seeking
+  }, []);
+
+  // Annotation handlers
+  const updateAnnotationsForTime = useCallback(
+    (timestamp, updater) => {
+      setAnnotationsByTime((prev) => {
+        const existing = prev[timestamp] || { shapes: [], labels: null };
         const updated = updater(existing);
         return {
           ...prev,
-          [currentVideoKey]: {
-            ...videoAnnotations,
-            [frameTime]: updated,
-          },
+          [timestamp]: updated,
         };
       });
     },
-    [selectedVideo, currentVideoKey]
+    []
   );
 
   const handleShapeAdd = useCallback(
     (shape) => {
-      if (!selectedVideo || !selectedFrame) return;
-      updateAnnotationsForFrame(selectedFrame.time, (existing) => [...existing, shape]);
+      if (!isVideoReady || isPlaying) return;
+      updateAnnotationsForTime(currentTimestamp, (existing) => ({
+        ...existing,
+        shapes: [...existing.shapes, shape],
+      }));
       setSelectedShapeId(shape.id);
     },
-    [selectedVideo, selectedFrame, updateAnnotationsForFrame]
+    [isVideoReady, isPlaying, currentTimestamp, updateAnnotationsForTime]
   );
 
   const handleShapeUpdate = useCallback(
     (shapeId, updates) => {
-      if (!selectedVideo || !selectedFrame) return;
-      updateAnnotationsForFrame(selectedFrame.time, (existing) =>
-        existing.map((shape) => (shape.id === shapeId ? { ...shape, ...updates } : shape))
-      );
+      if (!isVideoReady || isPlaying) return;
+      updateAnnotationsForTime(currentTimestamp, (existing) => ({
+        ...existing,
+        shapes: existing.shapes.map((shape) =>
+          shape.id === shapeId ? { ...shape, ...updates } : shape
+        ),
+      }));
     },
-    [selectedVideo, selectedFrame, updateAnnotationsForFrame]
+    [isVideoReady, isPlaying, currentTimestamp, updateAnnotationsForTime]
   );
 
   const handleShapeDelete = useCallback(
     (shapeId) => {
-      if (!selectedVideo || !selectedFrame) return;
-      updateAnnotationsForFrame(selectedFrame.time, (existing) =>
-        existing.filter((shape) => shape.id !== shapeId)
-      );
+      if (!isVideoReady || isPlaying) return;
+      updateAnnotationsForTime(currentTimestamp, (existing) => ({
+        ...existing,
+        shapes: existing.shapes.filter((shape) => shape.id !== shapeId),
+      }));
       if (selectedShapeId === shapeId) {
         setSelectedShapeId(null);
       }
     },
-    [selectedVideo, selectedFrame, selectedShapeId, updateAnnotationsForFrame]
+    [isVideoReady, isPlaying, currentTimestamp, selectedShapeId, updateAnnotationsForTime]
   );
 
   const handleOpacityChange = (newOpacity) => {
     setOpacity(newOpacity);
-    if (selectedShapeId && selectedFrame) {
+    if (selectedShapeId && currentShapes.length) {
       handleShapeUpdate(selectedShapeId, { opacity: newOpacity });
     }
   };
 
-  const loadFramesFromLocal = useCallback(async () => {
-    setIsGeneratingFrames(true);
-    setFrameError(null);
-    setFrames([]);
-    setVideoInfo({ width: null, height: null, duration: null });
-    setSelectedFrame(null);
-    setSelectedShapeId(null);
-
-    const video = document.createElement('video');
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      setFrameError('Canvas is not supported in this browser.');
-      setIsGeneratingFrames(false);
-      return;
-    }
-
-    const cleanup = () => {
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-    };
-
-    const captureFrame = (time) =>
-      new Promise((resolve, reject) => {
-        const seekTime = Math.min(time, Math.max(video.duration - 0.1, 0));
-
-        const handleSeeked = () => {
-          try {
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const image = canvas.toDataURL('image/jpeg', 0.8);
-            resolve({ time, image });
-          } catch (err) {
-            reject(err);
-          } finally {
-            video.removeEventListener('error', handleError);
-          }
-        };
-
-        const handleError = (event) => {
-          video.removeEventListener('seeked', handleSeeked);
-          reject(event instanceof Error ? event : new Error('Failed to capture frame.'));
-        };
-
-        video.addEventListener('seeked', handleSeeked, { once: true });
-        video.addEventListener('error', handleError, { once: true });
-        video.currentTime = seekTime;
-      });
-
-    const handleMetadata = async () => {
-      try {
-        const { duration, videoWidth, videoHeight } = video;
-        if (!duration || Number.isNaN(duration)) {
-          throw new Error('Video metadata unavailable');
-        }
-
-        canvas.width = videoWidth || 1920;
-        canvas.height = videoHeight || 1080;
-        setVideoInfo({ width: videoWidth, height: videoHeight, duration });
-
-        const captureTimes = [];
-        for (let time = 0; time < duration; time += FRAME_INTERVAL_SECONDS) {
-          captureTimes.push(time);
-        }
-        if (!captureTimes.length || duration - captureTimes[captureTimes.length - 1] > 1) {
-          captureTimes.push(duration);
-        }
-
-        const newFrames = [];
-        for (const time of captureTimes) {
-          try {
-            const frame = await captureFrame(time);
-            newFrames.push(frame);
-          } catch (error) {
-            console.error('Frame capture failed', error);
-            setFrameError('Unable to capture frames from the video. The file may be corrupted.');
-            break;
-          }
-        }
-
-        if (newFrames.length) {
-          setFrames(newFrames);
-          setSelectedFrame(newFrames[0]);
-        }
-      } catch (error) {
-        console.error('Video processing failed', error);
-        const message = error?.message?.includes('metadata')
-          ? 'Video appears to be corrupted.'
-          : 'Failed to load the video frames.';
-        setFrameError(message);
-      } finally {
-        setIsGeneratingFrames(false);
-      }
-    };
-
-    const handleVideoError = (event) => {
-      console.error('Video load error', event);
-      setFrameError('Failed to load video. It may be corrupted or inaccessible.');
-      setIsGeneratingFrames(false);
-    };
-
-    video.crossOrigin = 'anonymous';
-    video.preload = 'auto';
-    video.muted = true;
-    video.addEventListener('error', handleVideoError, { once: true });
-    video.addEventListener('loadedmetadata', handleMetadata, { once: true });
-    video.src = FALLBACK_VIDEO_URL;
-    video.load();
-
-    return cleanup;
-  }, []);
-
-  useEffect(() => {
-    setSelectedVideo(FALLBACK_VIDEO);
-    loadFramesFromLocal();
-  }, [loadFramesFromLocal]);
-
+  // Video selection
   const handleVideoSelect = useCallback(
-    async () => {
-      setIsVideoPanelOpen(false);
-      setFrameError('Google Cloud integration to be implemented.');
+    async (video) => {
+      setVideoError(null);
       setSaveStatus(null);
       setSaveError(null);
-      setSelectedVideo(FALLBACK_VIDEO);
-      await loadFramesFromLocal();
+      setSelectedVideo(video || FALLBACK_VIDEO);
+      setVideoUrl(video?.isFallback ? FALLBACK_VIDEO_URL : FALLBACK_VIDEO_URL); // For now, always use fallback
+      setIsVideoReady(false);
+      setCurrentTime(0);
+      setIsPlaying(false);
+      // Clear annotations when switching videos
+      setAnnotationsByTime({});
+      setSavedAnnotations([]);
     },
-    [loadFramesFromLocal]
+    []
   );
 
-  const handleFrameSelect = useCallback((frame) => {
-    setSelectedFrame(frame);
-    setSelectedShapeId(null);
-    setSaveStatus(null);
-    setSaveError(null);
+  // Load fallback video on mount
+  useEffect(() => {
+    setSelectedVideo(FALLBACK_VIDEO);
+    setVideoUrl(FALLBACK_VIDEO_URL);
   }, []);
 
+  // Save annotation
   const composeAnnotatedImage = useCallback(async () => {
-    if (!selectedFrame) {
-      throw new Error('Select a frame before saving.');
+    if (!isVideoReady) {
+      throw new Error('Video not ready.');
     }
 
-    const baseImage = new Image();
-    baseImage.crossOrigin = 'anonymous';
-    baseImage.src = selectedFrame.image;
-    await baseImage.decode();
+    // Capture current frame from video
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.src = videoUrl;
+    video.currentTime = currentTime;
+    
+    await new Promise((resolve, reject) => {
+      video.addEventListener('loadeddata', resolve, { once: true });
+      video.addEventListener('error', reject, { once: true });
+    });
+
+    await new Promise((resolve) => {
+      video.addEventListener('seeked', resolve, { once: true });
+    });
 
     const canvas = document.createElement('canvas');
-    canvas.width = baseImage.width;
-    canvas.height = baseImage.height;
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
     const context = canvas.getContext('2d');
-    context.drawImage(baseImage, 0, 0);
+    context.drawImage(video, 0, 0);
 
-    const { width: displayWidth, height: displayHeight } = computeDisplaySize(videoInfo);
-    const scaleX = displayWidth ? canvas.width / displayWidth : 1;
-    const scaleY = displayHeight ? canvas.height / displayHeight : 1;
-    const scaleAvg = (scaleX + scaleY) / 2;
-
+    // Draw shapes
     currentShapes.forEach((shape) => {
       context.globalAlpha = (shape.opacity ?? 60) / 100;
       context.fillStyle = shape.color || '#ef4444';
       if (shape.type === 'circle') {
-        const scaledRadius = shape.radius * scaleAvg;
         context.beginPath();
-        context.arc(shape.x * scaleX, shape.y * scaleY, scaledRadius, 0, Math.PI * 2);
+        context.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
         context.fill();
       } else if (shape.type === 'square') {
-        const scaledSize = shape.size * scaleAvg;
         context.fillRect(
-          shape.x * scaleX - scaledSize / 2,
-          shape.y * scaleY - scaledSize / 2,
-          scaledSize,
-          scaledSize
+          shape.x - shape.size / 2,
+          shape.y - shape.size / 2,
+          shape.size,
+          shape.size
         );
       }
       context.globalAlpha = 1;
     });
 
     return canvas.toDataURL('image/png');
-  }, [selectedFrame, currentShapes, videoInfo]);
+  }, [isVideoReady, videoUrl, currentTime, currentShapes]);
 
   const handleSaveAnnotation = useCallback(async () => {
     if (!selectedVideo) {
       setSaveError('Select a video before saving annotations.');
       return;
     }
-    if (!selectedFrame) {
-      setSaveError('Select a frame before saving annotations.');
+    if (!isVideoReady) {
+      setSaveError('Video not ready.');
       return;
     }
+    if (isPlaying) {
+      setSaveError('Pause the video before saving annotations.');
+      return;
+    }
+
+    // Get selected labels
+    const selectedLabel = labels.clean.checked ? 'clean' : labels.dirty.checked ? 'dirty' : null;
+    if (!selectedLabel) {
+      setSaveError('Please select a label (Clean or Dirty) before saving.');
+      return;
+    }
+
+    const selectedSublabels = labels.dirty.checked && labels.dirty.sublabels
+      ? labels.dirty.sublabels.filter((s) => s.checked).map((s) => s.name)
+      : [];
 
     try {
       setSaveError(null);
       setSaveStatus('Saving…');
+      
       const imageData = await composeAnnotatedImage();
-      const response = await uploadAnnotatedFrame({
-        fileName: undefined,
-        imageData,
-        videoName: selectedVideo.name,
-        frameTime: selectedFrame.time,
+      
+      // Save to backend (if implemented)
+      try {
+        await uploadAnnotatedFrame({
+          fileName: undefined,
+          imageData,
+          videoName: selectedVideo.name,
+          frameTime: currentTime,
+        });
+      } catch (error) {
+        console.warn('Backend save failed, saving locally', error);
+      }
+
+      // Save annotation metadata locally
+      const annotation = {
+        time: currentTime,
+        label: selectedLabel,
+        sublabels: selectedSublabels,
+        savedAt: new Date().toISOString(),
+      };
+
+      // Update annotations for this timestamp
+      updateAnnotationsForTime(currentTimestamp, (existing) => ({
+        ...existing,
+        labels: { label: selectedLabel, sublabels: selectedSublabels },
+      }));
+
+      // Add to saved annotations list
+      setSavedAnnotations((prev) => {
+        // Remove existing annotation at this time if any
+        const filtered = prev.filter((a) => Math.abs(a.time - currentTime) > 0.1);
+        return [...filtered, annotation].sort((a, b) => a.time - b.time);
       });
-      setSaveStatus(`Saved to ${response.bucket}/${response.objectPath}`);
+
+      setSaveStatus(`Annotation saved at ${Math.floor(currentTime)}s`);
+      setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
       console.error('Save annotation failed', error);
       const message = error.message || 'Failed to save annotation.';
       setSaveError(message);
       setSaveStatus(null);
     }
-  }, [selectedVideo, selectedFrame, composeAnnotatedImage]);
+  }, [
+    selectedVideo,
+    isVideoReady,
+    isPlaying,
+    currentTime,
+    currentTimestamp,
+    labels,
+    composeAnnotatedImage,
+    updateAnnotationsForTime,
+  ]);
 
   const selectedShapeOpacity = selectedShapeId
     ? currentShapes.find((shape) => shape.id === selectedShapeId)?.opacity
     : null;
+
+  // Get annotated timestamps for timeline markers
+  const annotatedTimestamps = useMemo(() => {
+    return savedAnnotations.map((annotation) => ({
+      time: annotation.time,
+      label: annotation.label,
+      sublabels: annotation.sublabels,
+    }));
+  }, [savedAnnotations]);
+
+  const handleSeekToAnnotation = useCallback((time) => {
+    handleSeek(time);
+  }, [handleSeek]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
@@ -344,17 +349,6 @@ export default function SegmentationDashboard() {
       <div className="flex flex-1 overflow-hidden">
         <ToolPanel activeTool={activeTool} onToolChange={handleToolChange} />
         <div className="flex-1 flex flex-col min-w-0 relative">
-          <VideoLibraryPanel
-            isOpen={isVideoPanelOpen}
-            onToggle={() => setIsVideoPanelOpen((open) => !open)}
-            videos={videos}
-            loading={false}
-            error={videoListError}
-            selectedVideoName={selectedVideo?.name || null}
-            onSelect={handleVideoSelect}
-            onRefresh={() => {}}
-          />
-
           <div className="bg-white border-b border-gray-300 px-6 py-3 flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <h2 className="text-lg font-semibold text-gray-800">Segmentation Workspace</h2>
@@ -368,7 +362,7 @@ export default function SegmentationDashboard() {
               <button
                 onClick={handleSaveAnnotation}
                 className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-                disabled={!selectedFrame || isGeneratingFrames}
+                disabled={!isVideoReady || isPlaying || !labels.clean.checked && !labels.dirty.checked}
               >
                 Save Annotation
               </button>
@@ -396,11 +390,12 @@ export default function SegmentationDashboard() {
             </div>
           </div>
 
-          {(videoListError || saveStatus || saveError) && (
+          {(videoListError || saveStatus || saveError || videoError) && (
             <div className="px-6 py-2 text-sm border-b border-gray-200 bg-white space-y-1">
               {videoListError && (
                 <div className="text-blue-600">{videoListError}</div>
               )}
+              {videoError && <div className="text-red-500">{videoError}</div>}
               {saveStatus && <div className="text-green-600">{saveStatus}</div>}
               {saveError && <div className="text-red-500">{saveError}</div>}
             </div>
@@ -417,26 +412,45 @@ export default function SegmentationDashboard() {
             onShapeSelect={setSelectedShapeId}
             onShapeUpdate={handleShapeUpdate}
             onShapeDelete={handleShapeDelete}
-            frameImage={selectedFrame?.image ?? null}
-            frameTime={selectedFrame?.time ?? null}
+            videoUrl={videoUrl}
             videoInfo={videoInfo}
+            isVideoReady={isVideoReady}
+            onVideoReady={handleVideoReady}
+            onVideoTimeUpdate={handleVideoTimeUpdate}
+            onVideoPlay={handleVideoPlay}
+            onVideoPause={handleVideoPause}
+            onVideoError={handleVideoError}
+            currentTime={currentTime}
+            isPlaying={isPlaying}
           />
-          <FrameTimeline
-            frames={frames}
-            selectedFrameTime={selectedFrame?.time ?? null}
-            onSelect={handleFrameSelect}
-            isLoading={isGeneratingFrames}
-            error={frameError}
+          <VideoTimeline
+            duration={videoInfo.duration || 0}
+            currentTime={currentTime}
+            isPlaying={isPlaying}
+            onSeek={handleSeek}
+            onPlayPause={handlePlayPause}
+            annotatedTimestamps={annotatedTimestamps}
           />
         </div>
-        <LabelSidebar
+        <RightSidebar
+          activeTab={rightSidebarTab}
+          onTabChange={setRightSidebarTab}
+          videos={videos}
+          videoListError={videoListError}
+          selectedVideoName={selectedVideo?.name || null}
+          onVideoSelect={handleVideoSelect}
+          onVideoRefresh={() => {}}
           opacity={selectedShapeOpacity ?? opacity}
           onOpacityChange={handleOpacityChange}
+          labels={labels}
+          onLabelsChange={setLabels}
+          recordedAnnotations={savedAnnotations}
+          onSeekToAnnotation={handleSeekToAnnotation}
         />
       </div>
       <StatusBar
         zoom={zoom}
-        frameTime={selectedFrame?.time ?? null}
+        frameTime={currentTime}
         resolution={
           videoInfo.width && videoInfo.height
             ? `${videoInfo.width}×${videoInfo.height}`
@@ -447,4 +461,3 @@ export default function SegmentationDashboard() {
     </div>
   );
 }
-

@@ -1,8 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { computeDisplaySize } from '../utils/canvasSizing';
-
-const PLACEHOLDER_IMAGE =
-  'https://images.unsplash.com/photo-1551601651-2a8555f1a136?w=1600&h=900&fit=crop&auto=format';
+import VideoPlayer from './VideoPlayer';
 
 export default function SegmentationCanvas({
   opacity = 60,
@@ -15,11 +12,17 @@ export default function SegmentationCanvas({
   onShapeSelect,
   onShapeUpdate,
   onShapeDelete,
-  frameImage = null,
-  frameTime = null,
+  videoUrl = null,
   videoInfo = {},
+  isVideoReady = false,
+  onVideoReady,
+  onVideoTimeUpdate,
+  onVideoPlay,
+  onVideoPause,
+  onVideoError,
+  currentTime = 0,
+  isPlaying = false,
 }) {
-  const [imageLoaded, setImageLoaded] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -28,22 +31,14 @@ export default function SegmentationCanvas({
   const [currentShape, setCurrentShape] = useState(null);
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
+  const videoRef = useRef(null);
 
-  const canAnnotate = Boolean(frameImage);
-  const displaySrc = frameImage || PLACEHOLDER_IMAGE;
-  const { width: displayWidth, height: displayHeight } = computeDisplaySize(videoInfo);
-  const containerStyle = {
-    width: '100%',
-    maxWidth: `${displayWidth}px`,
-    maxHeight: `${displayHeight}px`,
-    flexShrink: 1,
-  };
+  const canAnnotate = isVideoReady && !isPlaying; // Can only annotate when paused
 
   useEffect(() => {
-    setImageLoaded(false);
     setPosition({ x: 0, y: 0 });
     setIsDragging(false);
-  }, [frameImage]);
+  }, [videoUrl]);
 
   // Handle pan mode
   const handleMouseDown = (e) => {
@@ -247,103 +242,107 @@ export default function SegmentationCanvas({
     >
       <div
         ref={canvasRef}
-        className="relative flex items-center justify-center"
+        className="relative flex items-center justify-center w-full h-full"
         style={{
           transform: `translate(${position.x}px, ${position.y}px) scale(${zoom / 100})`,
           transformOrigin: 'center',
-          ...containerStyle,
         }}
       >
-        <img
-          key={frameTime ?? 'placeholder'}
-          src={displaySrc}
-          alt={frameTime !== null ? `Frame at ${frameTime.toFixed(2)}s` : 'Segmentation frame'}
-          className="select-none"
-          style={{
-            width: '100%',
-            height: 'auto',
-            pointerEvents: 'none',
-            objectFit: 'contain',
-          }}
-          draggable={false}
-          onLoad={() => setImageLoaded(true)}
-          onError={(e) => {
-            e.target.src = PLACEHOLDER_IMAGE;
-          }}
-        />
-        {imageLoaded && canAnnotate && (
-          <div
-            className="absolute pointer-events-none"
-            style={{
-              width: '100%',
-              height: '100%',
-              opacity: opacity / 100,
-              background:
-                'linear-gradient(45deg, rgba(239, 68, 68, 0.3) 25%, transparent 25%), linear-gradient(-45deg, rgba(239, 68, 68, 0.3) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(239, 68, 68, 0.3) 75%), linear-gradient(-45deg, transparent 75%, rgba(239, 68, 68, 0.3) 75%)',
-              backgroundSize: '20px 20px',
-              backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
-            }}
-          />
-        )}
-        {imageLoaded && (
-          <svg
-            className="absolute top-0 left-0"
-            style={{
-              width: '100%',
-              height: '100%',
-              pointerEvents: panMode || !canAnnotate ? 'none' : 'auto',
-            }}
-          >
-            {allShapes.map((shape) => {
-              const isSelected = shape.id === selectedShapeId;
-              if (shape.type === 'circle') {
-                return (
-                  <circle
-                    key={shape.id}
-                    cx={shape.x}
-                    cy={shape.y}
-                    r={shape.radius}
-                    fill={shape.color}
-                    opacity={shape.opacity / 100}
-                    stroke={isSelected ? '#3b82f6' : 'transparent'}
-                    strokeWidth={isSelected ? 3 : 0}
-                    style={{ cursor: 'pointer' }}
-                    onClick={(e) => {
-                      if (panMode || !canAnnotate) return;
-                      e.stopPropagation();
-                      onShapeSelect(shape.id);
-                    }}
-                  />
-                );
-              }
-              return (
-                <rect
-                  key={shape.id}
-                  x={shape.x - shape.size / 2}
-                  y={shape.y - shape.size / 2}
-                  width={shape.size}
-                  height={shape.size}
-                  fill={shape.color}
-                  opacity={shape.opacity / 100}
-                  stroke={isSelected ? '#3b82f6' : 'transparent'}
-                  strokeWidth={isSelected ? 3 : 0}
-                  style={{ cursor: 'pointer' }}
-                  onClick={(e) => {
-                    if (panMode || !canAnnotate) return;
-                    e.stopPropagation();
-                    onShapeSelect(shape.id);
-                  }}
-                />
-              );
-            })}
-          </svg>
-        )}
-        {!canAnnotate && (
-          <div
-            className="absolute inset-0 flex items-center justify-center bg-black/50 text-gray-200 text-sm text-center px-4"
-            style={{ width: '100%', height: '100%' }}
-          >
-            Frames are still loading. Please select a video frame from the timeline once available.
+        {videoUrl ? (
+          <>
+            <div className="relative w-full h-full flex items-center justify-center">
+              <VideoPlayer
+                videoUrl={videoUrl}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
+                onTimeUpdate={onVideoTimeUpdate}
+                onPlay={onVideoPlay}
+                onPause={onVideoPause}
+                onLoadedMetadata={onVideoReady}
+                onError={onVideoError}
+              />
+            </div>
+            {isVideoReady && canAnnotate && (
+              <div
+                className="absolute pointer-events-none top-0 left-0"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  opacity: opacity / 100,
+                  background:
+                    'linear-gradient(45deg, rgba(239, 68, 68, 0.3) 25%, transparent 25%), linear-gradient(-45deg, rgba(239, 68, 68, 0.3) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(239, 68, 68, 0.3) 75%), linear-gradient(-45deg, transparent 75%, rgba(239, 68, 68, 0.3) 75%)',
+                  backgroundSize: '20px 20px',
+                  backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
+                }}
+              />
+            )}
+            {isVideoReady && (
+              <svg
+                className="absolute top-0 left-0"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  pointerEvents: panMode || !canAnnotate ? 'none' : 'auto',
+                }}
+              >
+                {allShapes.map((shape) => {
+                  const isSelected = shape.id === selectedShapeId;
+                  if (shape.type === 'circle') {
+                    return (
+                      <circle
+                        key={shape.id}
+                        cx={shape.x}
+                        cy={shape.y}
+                        r={shape.radius}
+                        fill={shape.color}
+                        opacity={shape.opacity / 100}
+                        stroke={isSelected ? '#3b82f6' : 'transparent'}
+                        strokeWidth={isSelected ? 3 : 0}
+                        style={{ cursor: 'pointer' }}
+                        onClick={(e) => {
+                          if (panMode || !canAnnotate) return;
+                          e.stopPropagation();
+                          onShapeSelect(shape.id);
+                        }}
+                      />
+                    );
+                  }
+                  return (
+                    <rect
+                      key={shape.id}
+                      x={shape.x - shape.size / 2}
+                      y={shape.y - shape.size / 2}
+                      width={shape.size}
+                      height={shape.size}
+                      fill={shape.color}
+                      opacity={shape.opacity / 100}
+                      stroke={isSelected ? '#3b82f6' : 'transparent'}
+                      strokeWidth={isSelected ? 3 : 0}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        if (panMode || !canAnnotate) return;
+                        e.stopPropagation();
+                        onShapeSelect(shape.id);
+                      }}
+                    />
+                  );
+                })}
+              </svg>
+            )}
+            {!isVideoReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-gray-200 text-sm text-center px-4">
+                Loading video...
+              </div>
+            )}
+            {isVideoReady && isPlaying && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-gray-200 text-sm">
+                Video is playing. Pause to annotate.
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-gray-200 text-sm text-center px-4">
+            No video loaded. Please select a video from the Video Library.
           </div>
         )}
       </div>

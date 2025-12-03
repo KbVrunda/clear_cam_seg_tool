@@ -20,6 +20,73 @@ export default function VideoLibraryPanel({
     });
   }, [videos]);
 
+  // If used as a sidebar (always open), render simplified version
+  if (isOpen && !onToggle) {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-800">Available Videos</h3>
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+            >
+              Refresh
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 text-sm text-blue-600 bg-blue-50 rounded border border-blue-200">
+            {error}
+          </div>
+        )}
+        {loading && (
+          <div className="py-6 text-sm text-gray-500 text-center">Loading videos…</div>
+        )}
+        {!loading && !sortedVideos.length && (
+          <div className="py-6 text-sm text-gray-500 text-center">No videos available.</div>
+        )}
+        {!loading && sortedVideos.length > 0 && (
+          <ul className="space-y-2">
+            {sortedVideos.map((video) => {
+              const isSelected = video.name === selectedVideoName;
+              const sizeMb = video.size ? (Number(video.size) / (1024 * 1024)).toFixed(1) : null;
+              return (
+                <li key={video.name}>
+                  <button
+                    type="button"
+                    onClick={() => onSelect?.(video)}
+                    className={`w-full text-left p-3 rounded transition ${
+                      isSelected
+                        ? 'bg-blue-50 text-blue-700 border-2 border-blue-300'
+                        : 'hover:bg-gray-50 border-2 border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium truncate">
+                        {video.isFallback ? `${video.name} (fallback)` : video.name}
+                      </span>
+                      {sizeMb && <span className="text-xs text-gray-400 ml-2">{sizeMb} MB</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 flex justify-between">
+                      <span>{video.bucket}</span>
+                      {video.updatedAt && (
+                        <span>{new Date(video.updatedAt).toLocaleString()}</span>
+                      )}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  // Original floating panel version (for backward compatibility)
   return (
     <div className="absolute top-6 left-6 z-30">
       <button

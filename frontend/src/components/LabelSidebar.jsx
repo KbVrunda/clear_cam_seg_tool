@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockLabels } from '../utils/mockData';
 
 const colorMap = {
@@ -9,18 +9,33 @@ const colorMap = {
   orange: 'bg-orange-500',
 };
 
-export default function LabelSidebar({ opacity, onOpacityChange }) {
-  const [labels, setLabels] = useState(mockLabels);
+export default function LabelSidebar({ opacity, onOpacityChange, labels, onLabelsChange }) {
+  const [localLabels, setLocalLabels] = useState(labels || mockLabels);
+  
+  // Sync with external labels if provided
+  useEffect(() => {
+    if (labels) {
+      setLocalLabels(labels);
+    }
+  }, [labels]);
+  
+  const updateLabels = (updater) => {
+    setLocalLabels((prev) => {
+      const newLabels = typeof updater === 'function' ? updater(prev) : updater;
+      onLabelsChange?.(newLabels);
+      return newLabels;
+    });
+  };
 
   const toggleLabel = (labelKey) => {
-    setLabels((prev) => ({
+    updateLabels((prev) => ({
       ...prev,
       [labelKey]: { ...prev[labelKey], checked: !prev[labelKey].checked },
     }));
   };
 
   const toggleSublabel = (sublabelName) => {
-    setLabels((prev) => {
+    updateLabels((prev) => {
       const updatedSublabels = prev.dirty.sublabels.map((sublabel) =>
         sublabel.name === sublabelName
           ? { ...sublabel, checked: !sublabel.checked }
@@ -43,7 +58,7 @@ export default function LabelSidebar({ opacity, onOpacityChange }) {
   };
 
   const toggleExpand = () => {
-    setLabels((prev) => ({
+    updateLabels((prev) => ({
       ...prev,
       dirty: { ...prev.dirty, expanded: !prev.dirty.expanded },
     }));
@@ -73,12 +88,12 @@ export default function LabelSidebar({ opacity, onOpacityChange }) {
           <div className="flex items-center space-x-2">
             <input
               type="checkbox"
-              checked={labels.clean.checked}
+              checked={localLabels.clean.checked}
               onChange={() => toggleLabel('clean')}
               className="w-4 h-4"
             />
-            <div className={`w-4 h-4 rounded ${colorMap[labels.clean.color]}`} />
-            <span className="text-sm font-medium">{labels.clean.name}</span>
+            <div className={`w-4 h-4 rounded ${colorMap[localLabels.clean.color]}`} />
+            <span className="text-sm font-medium">{localLabels.clean.name}</span>
           </div>
         </div>
 
@@ -88,24 +103,24 @@ export default function LabelSidebar({ opacity, onOpacityChange }) {
             <div className="flex items-center space-x-2 flex-1">
               <input
                 type="checkbox"
-                checked={labels.dirty.checked}
+                checked={localLabels.dirty.checked}
                 onChange={() => toggleLabel('dirty')}
                 className="w-4 h-4"
               />
-              <div className={`w-4 h-4 rounded ${colorMap[labels.dirty.color]}`} />
-              <span className="text-sm font-medium">{labels.dirty.name}</span>
+              <div className={`w-4 h-4 rounded ${colorMap[localLabels.dirty.color]}`} />
+              <span className="text-sm font-medium">{localLabels.dirty.name}</span>
             </div>
             <button
               onClick={toggleExpand}
               className="text-gray-500 hover:text-gray-700"
             >
-              {labels.dirty.expanded ? '▼' : '▶'}
+              {localLabels.dirty.expanded ? '▼' : '▶'}
             </button>
           </div>
           
-          {labels.dirty.expanded && (
+          {localLabels.dirty.expanded && (
             <div className="ml-6 mt-2 space-y-2">
-              {labels.dirty.sublabels.map((sublabel) => (
+              {localLabels.dirty.sublabels.map((sublabel) => (
                 <div
                   key={sublabel.name}
                   className="flex items-center justify-between p-2 rounded hover:bg-gray-50"
