@@ -27,14 +27,34 @@ async function request(path, options = {}) {
   return payload;
 }
 
+/**
+ * Fetches list of all videos from GCS bucket
+ * @returns {Promise<Array>} Array of video objects with name, size, updated
+ */
+export async function getVideos() {
+  const data = await request('/videos');
+  return data?.videos || [];
+}
+
+/**
+ * Fetches a signed URL for a video by object name
+ * @param {string} objectName - The full path/name of the video object in GCS
+ * @returns {Promise<string>} The signed URL for streaming the video
+ */
+export async function getVideoUrl(objectName) {
+  const encoded = encodeURIComponent(objectName);
+  const data = await request(`/videos/url?objectName=${encoded}`);
+  return data?.url || null;
+}
+
+// Legacy function names for backward compatibility
 export async function listVideos() {
-  const data = await request('/api/videos');
-  return data?.items || [];
+  return getVideos();
 }
 
 export async function getVideoSignedUrl(name) {
-  const encoded = encodeURIComponent(name);
-  return request(`/api/videos/${encoded}/url`);
+  const url = await getVideoUrl(name);
+  return { url };
 }
 
 export async function uploadAnnotatedFrame({ fileName, imageData, videoName, frameTime }) {

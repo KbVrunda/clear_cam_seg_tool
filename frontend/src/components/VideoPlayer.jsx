@@ -57,8 +57,14 @@ export default function VideoPlayer({
 
   const handleError = (e) => {
     console.error('Video error', e);
-    onError?.('Failed to load video.');
+    const errorMessage = videoUrl 
+      ? `Failed to load video: ${videoUrl.includes('storage.googleapis.com') ? 'GCS video' : videoUrl}`
+      : 'Failed to load video.';
+    onError?.(errorMessage);
   };
+
+  // Only set crossOrigin for local files, not for GCS signed URLs
+  const shouldUseCrossOrigin = videoUrl && !videoUrl.includes('storage.googleapis.com') && !videoUrl.includes('http');
 
   return (
     <video
@@ -70,7 +76,7 @@ export default function VideoPlayer({
       onPlay={handlePlay}
       onPause={handlePause}
       onError={handleError}
-      crossOrigin="anonymous"
+      crossOrigin={shouldUseCrossOrigin ? "anonymous" : undefined}
       playsInline
     />
   );

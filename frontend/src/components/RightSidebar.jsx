@@ -8,6 +8,7 @@ export default function RightSidebar({
   onTabChange,
   // Video Library props
   videos = [],
+  videosLoading = false,
   videoListError = null,
   selectedVideoName = null,
   onVideoSelect,
@@ -77,7 +78,7 @@ export default function RightSidebar({
             <VideoLibraryPanel
               isOpen={true}
               videos={videos}
-              loading={false}
+              loading={videosLoading}
               error={videoListError}
               selectedVideoName={selectedVideoName}
               onSelect={onVideoSelect}

@@ -5,7 +5,7 @@ import RightSidebar from './RightSidebar';
 import StatusBar from './StatusBar';
 import TopBar from './TopBar';
 import VideoTimeline from './VideoTimeline';
-import { uploadAnnotatedFrame } from '../api/client';
+import { uploadAnnotatedFrame, getVideos, getVideoUrl } from '../api/client';
 import { mockLabels } from '../utils/mockData';
 
 const FALLBACK_VIDEO = {
@@ -24,12 +24,14 @@ export default function SegmentationDashboard() {
   const [panMode, setPanMode] = useState(false);
 
   const [videos, setVideos] = useState([FALLBACK_VIDEO]);
-  const [videoListError, setVideoListError] = useState('Google Cloud integration to be implemented.');
+  const [videosLoading, setVideosLoading] = useState(false);
+  const [videoListError, setVideoListError] = useState(null);
   const [selectedVideo, setSelectedVideo] = useState(FALLBACK_VIDEO);
   const [rightSidebarTab, setRightSidebarTab] = useState('labels');
+  const [videoUrlLoading, setVideoUrlLoading] = useState(false);
 
   // Video playback state
-  const [videoUrl, setVideoUrl] = useState(FALLBACK_VIDEO_URL);
+  const [videoUrl, setVideoUrl] = useState(null); // Start with null, will be set when video is selected
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoInfo, setVideoInfo] = useState({ width: null, height: null, duration: null });
@@ -170,29 +172,86 @@ export default function SegmentationDashboard() {
     }
   };
 
-  // Video selection
+  // Fetch videos from backend on mount
+  const fetchVideos = useCallback(async () => {
+    setVideosLoading(true);
+    setVideoListError(null);
+    try {
+      console.log('Fetching videos from backend...');
+      const videoList = await getVideos();
+      console.log('Received videos:', videoList);
+      // Transform backend response to match expected format
+      const transformedVideos = videoList.map((video) => ({
+        name: video.name,
+        size: video.size,
+        updatedAt: video.updated,
+        bucket: 'gcs',
+        isFallback: false,
+      }));
+      console.log('Transformed videos:', transformedVideos);
+      // Only include fallback if we have no real videos
+      if (transformedVideos.length === 0) {
+        console.log('No videos found, using fallback');
+        setVideos([FALLBACK_VIDEO]);
+      } else {
+        console.log('Setting videos:', transformedVideos);
+        setVideos(transformedVideos);
+      }
+    } catch (error) {
+      console.error('Failed to fetch videos:', error);
+      setVideoListError(error.message || 'Failed to load videos');
+      // Keep fallback video available even on error
+      setVideos([FALLBACK_VIDEO]);
+    } finally {
+      setVideosLoading(false);
+    }
+  }, []);
+
+  // Video selection handler
   const handleVideoSelect = useCallback(
     async (video) => {
       setVideoError(null);
       setSaveStatus(null);
       setSaveError(null);
       setSelectedVideo(video || FALLBACK_VIDEO);
-      setVideoUrl(video?.isFallback ? FALLBACK_VIDEO_URL : FALLBACK_VIDEO_URL); // For now, always use fallback
       setIsVideoReady(false);
       setCurrentTime(0);
       setIsPlaying(false);
       // Clear annotations when switching videos
       setAnnotationsByTime({});
       setSavedAnnotations([]);
+
+      // If it's the fallback video, use the fallback URL
+      if (video?.isFallback) {
+        setVideoUrl(FALLBACK_VIDEO_URL);
+        return;
+      }
+
+      // Otherwise, fetch the signed URL from backend
+      if (video?.name) {
+        setVideoUrlLoading(true);
+        try {
+          const url = await getVideoUrl(video.name);
+          if (url) {
+            setVideoUrl(url);
+          } else {
+            setVideoError('Failed to get video URL');
+          }
+        } catch (error) {
+          console.error('Failed to fetch video URL:', error);
+          setVideoError(error.message || 'Failed to load video URL');
+        } finally {
+          setVideoUrlLoading(false);
+        }
+      }
     },
     []
   );
 
-  // Load fallback video on mount
+  // Fetch videos on mount
   useEffect(() => {
-    setSelectedVideo(FALLBACK_VIDEO);
-    setVideoUrl(FALLBACK_VIDEO_URL);
-  }, []);
+    fetchVideos();
+  }, [fetchVideos]);
 
   // Save annotation
   const composeAnnotatedImage = useCallback(async () => {
@@ -390,8 +449,11 @@ export default function SegmentationDashboard() {
             </div>
           </div>
 
-          {(videoListError || saveStatus || saveError || videoError) && (
+          {(videoListError || saveStatus || saveError || videoError || videoUrlLoading) && (
             <div className="px-6 py-2 text-sm border-b border-gray-200 bg-white space-y-1">
+              {videoUrlLoading && (
+                <div className="text-blue-600">Loading video URL…</div>
+              )}
               {videoListError && (
                 <div className="text-blue-600">{videoListError}</div>
               )}
@@ -436,10 +498,11 @@ export default function SegmentationDashboard() {
           activeTab={rightSidebarTab}
           onTabChange={setRightSidebarTab}
           videos={videos}
+          videosLoading={videosLoading}
           videoListError={videoListError}
           selectedVideoName={selectedVideo?.name || null}
           onVideoSelect={handleVideoSelect}
-          onVideoRefresh={() => {}}
+          onVideoRefresh={fetchVideos}
           opacity={selectedShapeOpacity ?? opacity}
           onOpacityChange={handleOpacityChange}
           labels={labels}

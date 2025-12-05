@@ -1,5 +1,16 @@
 import { useMemo } from 'react';
 
+/**
+ * Extracts the filename from a full path
+ * @param {string} path - Full path like "raw/videos/2025/12/01/demo.mp4"
+ * @returns {string} - Filename like "demo.mp4"
+ */
+function getFilename(path) {
+  if (!path) return path;
+  const parts = path.split('/');
+  return parts[parts.length - 1];
+}
+
 export default function VideoLibraryPanel({
   isOpen,
   onToggle,
@@ -65,13 +76,13 @@ export default function VideoLibraryPanel({
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium truncate">
-                        {video.isFallback ? `${video.name} (fallback)` : video.name}
+                      <span className="text-sm font-medium truncate" title={video.name}>
+                        {video.isFallback ? `${video.name} (fallback)` : getFilename(video.name)}
                       </span>
                       {sizeMb && <span className="text-xs text-gray-400 ml-2">{sizeMb} MB</span>}
                     </div>
                     <div className="text-xs text-gray-500 flex justify-between">
-                      <span>{video.bucket}</span>
+                      <span>{video.bucket || 'gcs'}</span>
                       {video.updatedAt && (
                         <span>{new Date(video.updatedAt).toLocaleString()}</span>
                       )}
@@ -141,13 +152,13 @@ export default function VideoLibraryPanel({
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium truncate">
-                            {video.isFallback ? `${video.name} (fallback)` : video.name}
+                          <span className="text-sm font-medium truncate" title={video.name}>
+                            {video.isFallback ? `${video.name} (fallback)` : getFilename(video.name)}
                           </span>
                           {sizeMb && <span className="text-xs text-gray-400">{sizeMb} MB</span>}
                         </div>
                         <div className="mt-1 text-xs text-gray-500 flex justify-between">
-                          <span>{video.bucket}</span>
+                          <span>{video.bucket || 'gcs'}</span>
                           {video.updatedAt && (
                             <span>{new Date(video.updatedAt).toLocaleString()}</span>
                           )}
